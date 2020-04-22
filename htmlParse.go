@@ -43,6 +43,19 @@ func (n *DomNode) Select(targets []Propety) ([]*DomNode, error) {
 	return htmlNodeStack, nil
 }
 
+// Content : Return all text under html.node
+func (n *DomNode) Content() string {
+	rst := ""
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.TextNode {
+			rst += (*DomNode)(c).Content()
+		} else {
+			rst += c.Data
+		}
+	}
+	return rst
+}
+
 //SelectAll : select the elements under html node by property structure
 func (n *DomNode) SelectAll(target Propety) []*DomNode {
 	var rst []*DomNode
@@ -106,7 +119,7 @@ func (n *DomNode) PrintNode(w io.Writer, padding string) {
 		attrString += fmt.Sprintf("%s: \"%s\" ", attr.Key, attr.Val)
 	}
 	if len(s) > 0 {
-		if n.Type != 1 {
+		if n.Type != html.TextNode {
 			writeString(w, fmt.Sprintf("%s<%s %s>\n", padding, s, attrString))
 		} else {
 			writeString(w, padding+s)
@@ -117,7 +130,7 @@ func (n *DomNode) PrintNode(w io.Writer, padding string) {
 			(*DomNode)(c).PrintNode(w, padding+"  ")
 		}
 	}
-	if n.Type != 1 && len(s) > 0 {
+	if n.Type != html.TextNode && len(s) > 0 {
 		writeString(w, fmt.Sprintf("%s</%s>\n", padding, n.Data))
 	}
 }
