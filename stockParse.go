@@ -31,16 +31,16 @@ func writeString(w io.Writer, s string) (n int, err error) {
 }
 
 //Select : select the DOM from slice of property sturcture
-func Select(n *html.Node, targets []Propety) ([]*html.Node, error) {
-	htmlNodeStack := findParent(n, targets[0])
+func (n *DomNode) Select(targets []Propety) ([]*DomNode, error) {
+	htmlNodeStack := n.findParent(targets[0])
 	fmt.Println(len(htmlNodeStack))
 	targets = targets[1:]
 	fmt.Println(targets)
 
 	for _, target := range targets {
-		tmpStack := make([]*html.Node, 0)
+		tmpStack := make([]*DomNode, 0)
 		for _, htmlNode := range htmlNodeStack {
-			tmpStack = append(tmpStack, SelectAll(htmlNode, target)...)
+			tmpStack = append(tmpStack, htmlNode.SelectAll(target)...)
 		}
 		htmlNodeStack = tmpStack
 	}
@@ -49,21 +49,21 @@ func Select(n *html.Node, targets []Propety) ([]*html.Node, error) {
 }
 
 //SelectAll : select the elements under html node by property structure
-func SelectAll(n *html.Node, target Propety) []*html.Node {
-	var rst []*html.Node
+func (n *DomNode) SelectAll(target Propety) []*DomNode {
+	var rst []*DomNode
 
 	// Travel to other element
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		// if find the wanted elements, put into rst
 		if target.Type == "data" {
 			if c.Data == target.Val {
-				rst = append(rst, c)
+				rst = append(rst, (*DomNode)(c))
 			}
 		} else {
 			for _, attr := range c.Attr {
 				// TODO: Deal with multiple class
 				if attr.Key == target.Type && strings.Contains(attr.Val, target.Val) {
-					rst = append(rst, c)
+					rst = append(rst, (*DomNode)(c))
 					break
 				}
 			}
@@ -72,13 +72,13 @@ func SelectAll(n *html.Node, target Propety) []*html.Node {
 	return rst
 }
 
-func findParent(n *html.Node, target Propety) []*html.Node {
-	var rst []*html.Node
+func (n *DomNode) findParent(target Propety) []*DomNode {
+	var rst []*DomNode
 	attrs := n.Attr
 	// if find the wanted elements, put into rst
 	if target.Type == "data" {
 		if n.Data == target.Val {
-			rst = append(rst, n)
+			rst = append(rst, (*DomNode)(n))
 		}
 	}
 
@@ -93,7 +93,7 @@ func findParent(n *html.Node, target Propety) []*html.Node {
 	// Travel to other element
 	if n.Type == html.ElementNode || n.Type == html.DocumentNode {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			tmp := findParent(c, target)
+			tmp := (*DomNode)(c).findParent(target)
 			if len(tmp) > 0 {
 				rst = append(rst, tmp...)
 			}
@@ -103,7 +103,7 @@ func findParent(n *html.Node, target Propety) []*html.Node {
 }
 
 //PrintNode Print the elemets under specific html node
-func PrintNode(w io.Writer, n *html.Node, padding string) {
+func (n *DomNode) PrintNode(w io.Writer, padding string) {
 	s := strings.TrimSpace(n.Data)
 	attrs := n.Attr
 	attrString := ""
@@ -119,7 +119,7 @@ func PrintNode(w io.Writer, n *html.Node, padding string) {
 	}
 	if n.Type == html.ElementNode || n.Type == html.DocumentNode {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			PrintNode(w, c, padding+"  ")
+			(*DomNode)(c).PrintNode(w, padding+"  ")
 		}
 	}
 	if n.Type != 1 && len(s) > 0 {
@@ -158,14 +158,14 @@ func main() {
 		{"data", "tbody"},
 		{"data", "tr"},
 	}
-	nodes, err := Select(doc, TargetProperty)
+
+	nodes, err := (*DomNode)(doc).Select(TargetProperty)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "find Target err: %v\n", err)
 	}
 
 	for i, node := range nodes {
 		fmt.Printf("Node: %d\n", i)
-		PrintNode(os.Stdout, node, "")
+		node.PrintNode(os.Stdout, "")
 	}
-
 }
