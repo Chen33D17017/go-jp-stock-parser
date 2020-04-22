@@ -3,9 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
-	"net/http"
-	"os"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -33,9 +30,7 @@ func writeString(w io.Writer, s string) (n int, err error) {
 //Select : select the DOM from slice of property sturcture
 func (n *DomNode) Select(targets []Propety) ([]*DomNode, error) {
 	htmlNodeStack := n.findParent(targets[0])
-	fmt.Println(len(htmlNodeStack))
 	targets = targets[1:]
-	fmt.Println(targets)
 
 	for _, target := range targets {
 		tmpStack := make([]*DomNode, 0)
@@ -124,48 +119,5 @@ func (n *DomNode) PrintNode(w io.Writer, padding string) {
 	}
 	if n.Type != 1 && len(s) > 0 {
 		writeString(w, fmt.Sprintf("%s</%s>\n", padding, n.Data))
-	}
-}
-
-func main() {
-	f, err := os.OpenFile("data.log", os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	defer func() {
-		if err := f.Close(); err != nil {
-			log.Fatal(err)
-		}
-	}()
-
-	addr := "https://stocks.finance.yahoo.co.jp/stocks/history/?code=6501.T"
-	resp, err := http.Get(addr)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "fetch : %v\n", err)
-		os.Exit(1)
-	}
-
-	doc, err := html.Parse(resp.Body)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "fetch : %v\n", err)
-		os.Exit(1)
-	}
-
-	TargetProperty := []Propety{
-		{"class", "padT12"},
-		{"data", "table"},
-		{"data", "tbody"},
-		{"data", "tr"},
-	}
-
-	nodes, err := (*DomNode)(doc).Select(TargetProperty)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "find Target err: %v\n", err)
-	}
-
-	for i, node := range nodes {
-		fmt.Printf("Node: %d\n", i)
-		node.PrintNode(os.Stdout, "")
 	}
 }
