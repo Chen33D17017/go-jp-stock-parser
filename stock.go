@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,10 +24,13 @@ func (s *stock) String() string {
 }
 
 func parseStockVal(s string) float64 {
+
 	s = strings.ReplaceAll(s, ",", "")
 	rst, err := strconv.ParseFloat(s, 64)
+
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Convert error %s", err)
+		fmt.Printf("Convert error with float: %v", err)
+		return rst
 	}
 	return rst
 }

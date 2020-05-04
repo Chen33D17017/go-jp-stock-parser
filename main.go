@@ -23,6 +23,7 @@ func main() {
 	stockNumber := flag.Int("stock", 6501, "The number of stock")
 	start := flag.String("start", "", "Start time in format '20xx.xx'")
 	end := flag.String("end", "", "End time in format '20xx.xx'")
+
 	flag.Parse()
 
 	f, err := os.OpenFile("data.log", os.O_RDWR|os.O_CREATE, 0644)
@@ -53,23 +54,64 @@ func main() {
 		e.y, e.m, e.d,
 	)
 
-	resp, err := http.Get(addr)
-	if err != nil {
-		log.Fatalf("main : %v\n", err)
+	worklist := make(chan []int, 1)
+	unseenPage := make(chan int)
+	var n int
+
+	// First page
+	worklist <- []int{1}
+	n++
+
+	for i := 0; i < 20; i++ {
+		go func() {
+			for page := range unseenPage {
+				targetPage := fmt.Sprintf("%s&p=%d", addr, page)
+				doc, err := getDoc(targetPage)
+				if err != nil {
+					log.Fatalf("Parse page: %d, %v", page, err)
+				}
+				pages, err := parsePage(doc)
+				if err != nil {
+					log.Fatalf("Parse page: %d, %v", page, err)
+				}
+				parsePrice(*stockNumber, doc)
+				go func() {
+					worklist <- pages
+				}()
+			}
+		}()
 	}
 
-	doc, err := html.Parse(resp.Body)
+	pageSeen := make(map[int]bool)
+	for ; n > 0; n-- {
+		list := <-worklist
+		// for list := range worklist {
+		for _, page := range list {
+			if !pageSeen[page] {
+				pageSeen[page] = true
+				n++
+				unseenPage <- page
+			}
+		}
+		//}
+	}
+
+}
+
+func getDoc(addr string) (*html.Node, error) {
+	resp, err := http.Get(addr)
 	if err != nil {
-		log.Fatalf("main : %v\n", err)
+		return nil, fmt.Errorf("getDoc: get response %v", err)
 	}
 
 	defer resp.Body.Close()
 
-	pages := make(chan int, 5)
-	go parsePage(doc, pages)
-	for page := range pages {
-		fmt.Println(page)
+	doc, err := html.Parse(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("getDoc: parse doc %v", err)
 	}
+
+	return doc, nil
 }
 
 func splitDate(date *string) (Date, error) {
@@ -93,13 +135,13 @@ func splitDate(date *string) (Date, error) {
 
 	rst.d, err = strconv.Atoi(dateSlice[2])
 	if err != nil {
-		return rst, fmt.Errorf("Invalid Format on Month")
+		return rst, fmt.Errorf("Invalid Format on Date")
 	}
 
 	return rst, nil
 }
 
-func parsePrice(doc *html.Node) {
+func parsePrice(name int, doc *html.Node) {
 
 	// Parse Path for price
 	PriceProperty := []Propety{
@@ -116,10 +158,10 @@ func parsePrice(doc *html.Node) {
 	stockData := make([]stock, 0)
 	for _, node := range nodes {
 		datas := node.SelectAll(Propety{"data", "td"})
-		if len(datas) > 0 {
+		if len(datas) == 7 {
 			stockData = append(stockData,
 				stock{
-					"6501",
+					fmt.Sprintf("%d", name),
 					parseDate(datas[0].Content()),
 					parseStockVal(datas[1].Content()),
 					parseStockVal(datas[2].Content()),
@@ -135,14 +177,15 @@ func parsePrice(doc *html.Node) {
 	}
 }
 
-func parsePage(doc *html.Node, ch chan int) {
+func parsePage(doc *html.Node) ([]int, error) {
+	var rst []int
 	PageProperty := []Propety{
 		{"class", "ymuiPagingBottom"},
 	}
 
 	nodes, err := (*DomNode)(doc).Select(PageProperty)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "parsePage: find Target err: %v", err)
+		return nil, fmt.Errorf("parsePage: select Target err: %v", err)
 	}
 
 	for _, node := range nodes {
@@ -151,9 +194,9 @@ func parsePage(doc *html.Node, ch chan int) {
 			content := data.Content()
 			page, err := strconv.Atoi(content)
 			if err == nil {
-				ch <- page
+				rst = append(rst, page)
 			}
 		}
 	}
-	close(ch)
+	return rst, nil
 }
