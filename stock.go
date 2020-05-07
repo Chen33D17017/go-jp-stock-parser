@@ -9,18 +9,19 @@ import (
 )
 
 type stock struct {
-	name   string
-	date   time.Time
-	open   float64
-	high   float64
-	low    float64
-	end    float64
-	volumn float64
-	close  float64
+	stockInfo
+	date    time.Time
+	dataSet [6]float64
+}
+
+type stockInfo struct {
+	id       int
+	name     string
+	category string
 }
 
 func (s *stock) String() string {
-	return fmt.Sprintf("%s @%s: %f", s.name, s.date, s.close)
+	return fmt.Sprintf("%s %s %d@%s: %f", s.name, s.category, s.id, s.TradeDate(), s.dataSet)
 }
 
 func parseStockVal(s string) float64 {
@@ -35,6 +36,11 @@ func parseStockVal(s string) float64 {
 	return rst
 }
 
+func (s *stock) TradeDate() string {
+	year, month, day := s.date.Date()
+	return fmt.Sprintf("%d-%d-%d", year, month, day)
+}
+
 func parseDate(s string) time.Time {
 	re := regexp.MustCompile(`\d+`)
 	reRst := re.FindAllString(s, -1)
@@ -46,3 +52,5 @@ func parseDate(s string) time.Time {
 	}
 	return time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.Local)
 }
+
+//func (s *stock)

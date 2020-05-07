@@ -1,13 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/net/html"
 )
@@ -19,17 +23,33 @@ type Date struct {
 	d int
 }
 
+type config struct {
+	StoreType     string `json:"type"`
+	ID            string `json:"id"`
+	PW            string `json:"password"`
+	DB            string `json:"database"`
+	DataTable     string `json:"dataTable"`
+	NameTable     string `json:"nameTable"`
+	CategoryTable string `json:"categoryTable"`
+}
+
 func main() {
-	stockNumber := flag.Int("stock", 6501, "The number of stock")
+	startTime := time.Now()
+	numCPUs := runtime.NumCPU()
+	runtime.GOMAXPROCS(numCPUs)
+	stockNumber := flag.Int("stock", 9201, "The number of stock")
 	start := flag.String("start", "", "Start time in format '20xx.xx'")
 	end := flag.String("end", "", "End time in format '20xx.xx'")
+	storageConfig := flag.String("file", "config.json", "Config file for storage, default with config.json")
 
 	flag.Parse()
 
+	// log file
 	f, err := os.OpenFile("data.log", os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.SetOutput(f)
 
 	defer func() {
 		if err := f.Close(); err != nil {
@@ -37,18 +57,37 @@ func main() {
 		}
 	}()
 
+	// Read the flag for start & end time
 	s, err := splitDate(start)
 	if err != nil {
-		log.Fatalf("Fail to extract start data %s\n", err)
+		log.Fatalf("Extract start data error: %s\n", err)
 	}
 	e, err := splitDate(end)
 	if err != nil {
-		log.Fatalf("Fail to extract end date %s\n", err)
+		log.Fatalf("Extract end date error: %s\n", err)
 	}
 
-	tmp := "https://info.finance.yahoo.co.jp/history/?code=%d.T&sy=%d&sm=%d&sd=%d&ey=%d&em=%d&ed=%d&tm=d"
+	// Read config file for databas
+	file, err := ioutil.ReadFile(*storageConfig)
+	if err != nil {
+		log.Fatalf("Read File err: %s", err.Error())
+	}
 
-	addr := fmt.Sprintf(tmp,
+	configData := config{}
+	err = json.Unmarshal([]byte(file), &configData)
+	if err != nil {
+		log.Fatalf("Read json err: %s", err.Error())
+	}
+	// fmt.Println(configData)
+	dbm, err := NewDBManager(configData)
+	if err != nil {
+		log.Fatalf("main: fail to connect db: %s", err)
+	}
+	defer dbm.Close()
+
+	addr := "https://info.finance.yahoo.co.jp/history/?code=%d.T&sy=%d&sm=%d&sd=%d&ey=%d&em=%d&ed=%d&tm=d"
+
+	addr = fmt.Sprintf(addr,
 		*stockNumber,
 		s.y, s.m, s.d,
 		e.y, e.m, e.d,
@@ -56,11 +95,24 @@ func main() {
 
 	worklist := make(chan []int, 1)
 	unseenPage := make(chan int)
-	var n int
 
-	// First page
+	// Parse the start point
 	worklist <- []int{1}
-	n++
+	n := 1
+
+	doc, err := getDoc(addr)
+	if err != nil {
+		log.Fatalf("Parse Page err : %s, %v", addr, err)
+	}
+	info := parseInfo(*stockNumber, doc)
+	// check whether stock in database
+	exist, err := dbm.checkStockExist(info, configData.NameTable)
+	if err != nil {
+		log.Fatalf("main: check stock err: %s", err)
+	}
+	if !exist {
+		dbm.newStock(info, configData)
+	}
 
 	for i := 0; i < 20; i++ {
 		go func() {
@@ -74,7 +126,7 @@ func main() {
 				if err != nil {
 					log.Fatalf("Parse page: %d, %v", page, err)
 				}
-				parsePrice(*stockNumber, doc)
+				parsePrice(info, doc, dbm)
 				go func() {
 					worklist <- pages
 				}()
@@ -85,7 +137,6 @@ func main() {
 	pageSeen := make(map[int]bool)
 	for ; n > 0; n-- {
 		list := <-worklist
-		// for list := range worklist {
 		for _, page := range list {
 			if !pageSeen[page] {
 				pageSeen[page] = true
@@ -93,9 +144,8 @@ func main() {
 				unseenPage <- page
 			}
 		}
-		//}
 	}
-
+	fmt.Printf("Runtime: %v", time.Since(startTime))
 }
 
 func getDoc(addr string) (*html.Node, error) {
@@ -141,45 +191,67 @@ func splitDate(date *string) (Date, error) {
 	return rst, nil
 }
 
-func parsePrice(name int, doc *html.Node) {
+// return name and category (string, string)
+func parseInfo(stockID int, doc *html.Node) stockInfo {
+	NameSelector := []Selector{{"class", "symbol"}, {"data", "h1"}}
+	CatgorySelector := []Selector{{"class", "category"}, {"data", "a"}}
+
+	nameNodes, err := (*DomNode)(doc).Select(NameSelector)
+	if err != nil || len(nameNodes) < 1 {
+		fmt.Fprintf(os.Stderr, "parseInfo: find Target err: %s", err.Error())
+	}
+
+	categoryNodes, err := (*DomNode)(doc).Select(CatgorySelector)
+	if err != nil || len(categoryNodes) < 1 {
+		fmt.Fprintf(os.Stderr, "parseName: find Target err: %s", err.Error())
+	}
+
+	return stockInfo{stockID, nameNodes[0].Content(), categoryNodes[0].Content()}
+}
+
+func parsePrice(info stockInfo, doc *html.Node, dbm DBManager) {
 
 	// Parse Path for price
-	PriceProperty := []Propety{
+	PriceSelector := []Selector{
 		{"class", "padT12"},
 		{"data", "table"},
 		{"data", "tbody"},
 		{"data", "tr"},
 	}
 
-	nodes, err := (*DomNode)(doc).Select(PriceProperty)
+	nodes, err := (*DomNode)(doc).Select(PriceSelector)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "parsePrice: find Target err: %v", err)
 	}
 	stockData := make([]stock, 0)
 	for _, node := range nodes {
-		datas := node.SelectAll(Propety{"data", "td"})
+		datas := node.SelectAll(Selector{"data", "td"})
+		dataSet := [6]float64{}
+		var date time.Time
 		if len(datas) == 7 {
-			stockData = append(stockData,
-				stock{
-					fmt.Sprintf("%d", name),
-					parseDate(datas[0].Content()),
-					parseStockVal(datas[1].Content()),
-					parseStockVal(datas[2].Content()),
-					parseStockVal(datas[3].Content()),
-					parseStockVal(datas[4].Content()),
-					parseStockVal(datas[5].Content()),
-					parseStockVal(datas[6].Content())})
+			for i, data := range datas {
+				if i == 0 {
+					date = parseDate(data.Content())
+				} else {
+					dataSet[i-1] = parseStockVal(data.Content())
+				}
+			}
+			stockData = append(stockData, stock{info, date, dataSet})
 		}
 	}
 
-	for n, stock := range stockData {
-		fmt.Printf("%d\t%s\n", n, &stock)
+	for _, stock := range stockData {
+		err := dbm.insertStock(stock)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		//fmt.Printf("%d\t%s\n", n, &stock)
 	}
 }
 
 func parsePage(doc *html.Node) ([]int, error) {
 	var rst []int
-	PageProperty := []Propety{
+	PageProperty := []Selector{
 		{"class", "ymuiPagingBottom"},
 	}
 
@@ -189,7 +261,7 @@ func parsePage(doc *html.Node) ([]int, error) {
 	}
 
 	for _, node := range nodes {
-		datas := node.SelectAll(Propety{"data", "a"})
+		datas := node.SelectAll(Selector{"data", "a"})
 		for _, data := range datas {
 			content := data.Content()
 			page, err := strconv.Atoi(content)

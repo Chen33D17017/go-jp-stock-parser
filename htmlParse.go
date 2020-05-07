@@ -8,8 +8,8 @@ import (
 	"golang.org/x/net/html"
 )
 
-//Propety is the property of the element
-type Propety struct {
+//Selector is the property of the element
+type Selector struct {
 	Type string
 	Val  string
 }
@@ -28,7 +28,7 @@ func writeString(w io.Writer, s string) (n int, err error) {
 }
 
 //Select : select the DOM from slice of property sturcture
-func (n *DomNode) Select(targets []Propety) ([]*DomNode, error) {
+func (n *DomNode) Select(targets []Selector) ([]*DomNode, error) {
 	htmlNodeStack := n.findParent(targets[0])
 	targets = targets[1:]
 
@@ -57,7 +57,7 @@ func (n *DomNode) Content() string {
 }
 
 //SelectAll : select the elements under html node by property structure
-func (n *DomNode) SelectAll(target Propety) []*DomNode {
+func (n *DomNode) SelectAll(target Selector) []*DomNode {
 	var rst []*DomNode
 
 	// Travel to other element
@@ -80,7 +80,7 @@ func (n *DomNode) SelectAll(target Propety) []*DomNode {
 	return rst
 }
 
-func (n *DomNode) findParent(target Propety) []*DomNode {
+func (n *DomNode) findParent(target Selector) []*DomNode {
 	var rst []*DomNode
 	attrs := n.Attr
 	// if find the wanted elements, put into rst
