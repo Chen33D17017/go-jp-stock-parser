@@ -9,7 +9,7 @@ import (
 
 // Initailize DBmanager
 
-//DBManger for controling the database
+//DBManager ... for controling the database
 type DBManager struct {
 	*sql.DB
 }
@@ -35,11 +35,11 @@ func NewDBManager(configData config) (DBManager, error) {
 
 func (dbm DBManager) insertStock(obj stock) error {
 	insert, err := dbm.Query("INSERT INTO `stock_data`(stock_id, price_at, open, high, low, close, vol) VALUES(?,?,?,?,?,?,?)",
-		obj.id, obj.TradeDate(), obj.dataSet[0], obj.dataSet[1], obj.dataSet[2], obj.dataSet[5], obj.dataSet[4])
+		obj.id, obj.TradeDate(), obj.dataSet[0], obj.dataSet[1], obj.dataSet[2], obj.dataSet[3], obj.dataSet[4])
 
 	if err != nil {
 		/* panic(err) */
-		return fmt.Errorf("Stock Data insert err: %s", err)
+		return fmt.Errorf("Stock Data insert err: %s\n", err.Error())
 	}
 	defer insert.Close()
 
@@ -105,10 +105,10 @@ func (dbm DBManager) getCategoryID(categoryName string, categoryTable string) ([
 	return ids, nil
 }
 
-func (dbm DBManager) checkStockExist(si stockInfo, nameTable string) (bool, error) {
+func (dbm DBManager) checkStockExist(si stockInfo, nameTable string) bool {
 	rows, err := dbm.Query("SELECT COUNT(*) FROM `stock_name` WHERE `id`=?", si.id)
 	if err != nil {
-		return false, fmt.Errorf("checkStockExist: select query err %s", err.Error())
+		panic(fmt.Sprintf("checkStockExist: select query err %s", err.Error()))
 	}
 
 	defer rows.Close()
@@ -116,11 +116,55 @@ func (dbm DBManager) checkStockExist(si stockInfo, nameTable string) (bool, erro
 	for rows.Next() {
 		err = rows.Scan(&c)
 		if err != nil {
-			return false, fmt.Errorf("newStock: check category err : %s", err.Error())
+			panic(fmt.Sprintf("newStock: check category err : %s", err.Error()))
 		}
 	}
 	if c == 0 {
-		return false, nil
+		return false
 	}
-	return true, nil
+	return true
+}
+
+func (dbm DBManager) getDataDuration(si stockInfo, cf config) (duration, error) {
+	var rst duration
+	ok := dbm.checkStockExist(si, cf.NameTable)
+	if !ok {
+		return rst, fmt.Errorf("The stock not exist in database")
+	}
+	oldestQuery := "SELECT min(`price_at`) FROM `stock_data` WHERE `stock_id`=?;"
+	latestQuery := "SELECT max(`price_at`) FROM `stock_data` WHERE `stock_id`=?;"
+	oldestRows, err := dbm.Query(oldestQuery, si.id)
+	if err != nil {
+		return rst, fmt.Errorf("getDataDuration: query error on oldest %s", err.Error())
+	}
+
+	latestRows, err := dbm.Query(latestQuery, si.id)
+	if err != nil {
+		return rst, fmt.Errorf("getDataDuration: query error on latest %s", err.Error())
+	}
+	defer latestRows.Close()
+	defer oldestRows.Close()
+
+	var o string
+	for oldestRows.Next() {
+		err = oldestRows.Scan(&o)
+		if err != nil {
+			return rst, fmt.Errorf("getDataDuration: extract oldest date query err %s", err.Error())
+		}
+	}
+
+	var l string
+	for latestRows.Next() {
+		err = latestRows.Scan(&l)
+		if err != nil {
+			return rst, fmt.Errorf("getDataDuration: extract latest data query err %s", err.Error())
+		}
+	}
+	od, err := ParseDate(o)
+	ld, err := ParseDate(l)
+	if err != nil {
+		return rst, fmt.Errorf("getDataDuration: change data type fail %s", err.Error())
+	}
+
+	return duration{od, ld}, nil
 }

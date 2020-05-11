@@ -8,20 +8,12 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"runtime"
 	"strconv"
-	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/html"
 )
-
-//Date ... type for store date
-type Date struct {
-	y int
-	m int
-	d int
-}
 
 type config struct {
 	StoreType     string `json:"type"`
@@ -33,13 +25,21 @@ type config struct {
 	CategoryTable string `json:"categoryTable"`
 }
 
+type duration struct {
+	start Date
+	end   Date
+}
+
+var wg sync.WaitGroup
+
 func main() {
 	startTime := time.Now()
-	numCPUs := runtime.NumCPU()
-	runtime.GOMAXPROCS(numCPUs)
+	/* numCPUs := runtime.NumCPU()
+	   runtime.GOMAXPROCS(numCPUs) */
 	stockNumber := flag.Int("stock", 9201, "The number of stock")
 	start := flag.String("start", "", "Start time in format '20xx.xx'")
 	end := flag.String("end", "", "End time in format '20xx.xx'")
+	update := flag.Bool("u", false, "Update to today")
 	storageConfig := flag.String("file", "config.json", "Config file for storage, default with config.json")
 
 	flag.Parse()
@@ -57,15 +57,23 @@ func main() {
 		}
 	}()
 
+	var s, e Date
 	// Read the flag for start & end time
-	s, err := splitDate(start)
-	if err != nil {
-		log.Fatalf("Extract start data error: %s\n", err)
+	if *update {
+		s = NewDate(2000, 1, 1)
+		e = NewDate(time.Now().Year(), int(time.Now().Month()), time.Now().Day())
+	} else {
+		s, err = ParseDate(*start)
+		if err != nil {
+			log.Fatalf("Extract start data error: %s", err)
+		}
+		e, err = ParseDate(*end)
+		if err != nil {
+			log.Fatalf("Extract end date error: %s", err)
+		}
+
 	}
-	e, err := splitDate(end)
-	if err != nil {
-		log.Fatalf("Extract end date error: %s\n", err)
-	}
+	parseDuration := duration{s, e}
 
 	// Read config file for databas
 	file, err := ioutil.ReadFile(*storageConfig)
@@ -78,19 +86,32 @@ func main() {
 	if err != nil {
 		log.Fatalf("Read json err: %s", err.Error())
 	}
-	// fmt.Println(configData)
+
 	dbm, err := NewDBManager(configData)
 	if err != nil {
 		log.Fatalf("main: fail to connect db: %s", err)
 	}
 	defer dbm.Close()
 
+	//check argument for avoiding dupliate data in database
+	info, durationRanges, err := checkArgument(*stockNumber, parseDuration, configData, dbm)
+
+	for _, dr := range durationRanges {
+		wg.Add(1)
+		go parseStockData(info, dbm, dr)
+	}
+
+	wg.Wait()
+	fmt.Printf("Runtime: %v", time.Since(startTime))
+}
+
+func parseStockData(si stockInfo, dbm DBManager, du duration) {
 	addr := "https://info.finance.yahoo.co.jp/history/?code=%d.T&sy=%d&sm=%d&sd=%d&ey=%d&em=%d&ed=%d&tm=d"
 
 	addr = fmt.Sprintf(addr,
-		*stockNumber,
-		s.y, s.m, s.d,
-		e.y, e.m, e.d,
+		si.id,
+		du.start.Year(), du.start.Month(), du.start.Day(),
+		du.end.Year(), du.end.Month(), du.end.Day(),
 	)
 
 	worklist := make(chan []int, 1)
@@ -99,20 +120,6 @@ func main() {
 	// Parse the start point
 	worklist <- []int{1}
 	n := 1
-
-	doc, err := getDoc(addr)
-	if err != nil {
-		log.Fatalf("Parse Page err : %s, %v", addr, err)
-	}
-	info := parseInfo(*stockNumber, doc)
-	// check whether stock in database
-	exist, err := dbm.checkStockExist(info, configData.NameTable)
-	if err != nil {
-		log.Fatalf("main: check stock err: %s", err)
-	}
-	if !exist {
-		dbm.newStock(info, configData)
-	}
 
 	for i := 0; i < 20; i++ {
 		go func() {
@@ -126,7 +133,7 @@ func main() {
 				if err != nil {
 					log.Fatalf("Parse page: %d, %v", page, err)
 				}
-				parsePrice(info, doc, dbm)
+				parsePrice(si, doc, dbm)
 				go func() {
 					worklist <- pages
 				}()
@@ -145,7 +152,43 @@ func main() {
 			}
 		}
 	}
-	fmt.Printf("Runtime: %v", time.Since(startTime))
+	wg.Done()
+}
+
+func checkArgument(stockNumber int, du duration, configData config, dbm DBManager) (stockInfo, []duration, error) {
+	addr := fmt.Sprintf("https://stocks.finance.yahoo.co.jp/stocks/detail/?code=%d.T", stockNumber)
+	doc, err := getDoc(addr)
+	rst := make([]duration, 0)
+	var info stockInfo
+	if err != nil {
+		return info, rst, fmt.Errorf("checkArgument get doc err : %s, %v", addr, err)
+	}
+	// get stock name and category
+	info = parseInfo(stockNumber, doc)
+	// check whether stock in database
+	exist := dbm.checkStockExist(info, configData.NameTable)
+	if err != nil {
+		log.Fatalf("checkArgument check stock err: %s", err)
+	}
+	if !exist {
+		dbm.newStock(info, configData)
+		return info, []duration{du}, nil
+	}
+
+	// if stock data is already in database
+	dbRst, err := dbm.getDataDuration(info, configData)
+	if err != nil {
+		panic(err)
+	}
+	if !dbRst.start.Before(du.start.getTime()) {
+		rst = append(rst, duration{du.start, dbRst.start})
+	}
+
+	if dbRst.end.Before(du.end.getTime()) {
+		rst = append(rst, duration{dbRst.end, du.end})
+	}
+
+	return info, rst, err
 }
 
 func getDoc(addr string) (*html.Node, error) {
@@ -162,33 +205,6 @@ func getDoc(addr string) (*html.Node, error) {
 	}
 
 	return doc, nil
-}
-
-func splitDate(date *string) (Date, error) {
-	var rst Date
-	var err error
-	dateSlice := strings.Split(*date, ".")
-
-	if len(dateSlice) != 3 {
-		return rst, fmt.Errorf("Invalid Format in Date")
-	}
-
-	rst.y, err = strconv.Atoi(dateSlice[0])
-	if err != nil {
-		return rst, fmt.Errorf("Invalid Format on Year")
-	}
-
-	rst.m, err = strconv.Atoi(dateSlice[1])
-	if err != nil {
-		return rst, fmt.Errorf("Invalid Format on Month")
-	}
-
-	rst.d, err = strconv.Atoi(dateSlice[2])
-	if err != nil {
-		return rst, fmt.Errorf("Invalid Format on Date")
-	}
-
-	return rst, nil
 }
 
 // return name and category (string, string)
@@ -227,13 +243,13 @@ func parsePrice(info stockInfo, doc *html.Node, dbm DBManager) {
 	for _, node := range nodes {
 		datas := node.SelectAll(Selector{"data", "td"})
 		dataSet := [6]float64{}
-		var date time.Time
+		var date Date
 		if len(datas) == 7 {
 			for i, data := range datas {
 				if i == 0 {
-					date = parseDate(data.Content())
+					date = getDate(data.Content())
 				} else {
-					dataSet[i-1] = parseStockVal(data.Content())
+					dataSet[i-1] = getStockVal(data.Content())
 				}
 			}
 			stockData = append(stockData, stock{info, date, dataSet})
@@ -243,9 +259,8 @@ func parsePrice(info stockInfo, doc *html.Node, dbm DBManager) {
 	for _, stock := range stockData {
 		err := dbm.insertStock(stock)
 		if err != nil {
-			log.Fatalln(err)
+			fmt.Fprintf(os.Stderr, "parsePrice %s", err)
 		}
-		//fmt.Printf("%d\t%s\n", n, &stock)
 	}
 }
 

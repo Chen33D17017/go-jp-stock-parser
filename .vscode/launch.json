@@ -11,7 +11,7 @@
       "mode": "auto",
       "program": "${fileDirname}",
       "env": {},
-      "args": ["--start", "2000.01.01", "--end", "2020.05.06", "--stock", "8591"]
+      "args": ["--start", "2001-01-01", "--end", "2020-05-01", "--stock", "9201", "-u"]
     }
   ]
 }
