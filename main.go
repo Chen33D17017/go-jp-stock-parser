@@ -26,9 +26,11 @@ type config struct {
 }
 
 type duration struct {
-	start Date
-	end   Date
+	start time.Time
+	end   time.Time
 }
+
+const DateFormat = "2006-01-02"
 
 var wg sync.WaitGroup
 
@@ -57,17 +59,21 @@ func main() {
 		}
 	}()
 
-	var s, e Date
+	var s, e time.Time
+
 	// Read the flag for start & end time
 	if *update {
-		s = NewDate(2000, 1, 1)
-		e = NewDate(time.Now().Year(), int(time.Now().Month()), time.Now().Day())
+		s, err = time.Parse(DateFormat, "2000-01-01")
+		if err != nil {
+			log.Fatal(err.Error())
+		}
+		e = time.Now()
 	} else {
-		s, err = ParseDate(*start)
+		s, err = time.Parse(DateFormat, *start)
 		if err != nil {
 			log.Fatalf("Extract start data error: %s", err)
 		}
-		e, err = ParseDate(*end)
+		e, err = time.Parse(DateFormat, *end)
 		if err != nil {
 			log.Fatalf("Extract end date error: %s", err)
 		}
@@ -180,11 +186,11 @@ func checkArgument(stockNumber int, du duration, configData config, dbm DBManage
 	if err != nil {
 		panic(err)
 	}
-	if !dbRst.start.Before(du.start.getTime()) {
+	if !dbRst.start.Before(du.start) {
 		rst = append(rst, duration{du.start, dbRst.start})
 	}
 
-	if dbRst.end.Before(du.end.getTime()) {
+	if dbRst.end.Before(du.end) {
 		rst = append(rst, duration{dbRst.end, du.end})
 	}
 
@@ -243,7 +249,7 @@ func parsePrice(info stockInfo, doc *html.Node, dbm DBManager) {
 	for _, node := range nodes {
 		datas := node.SelectAll(Selector{"data", "td"})
 		dataSet := [6]float64{}
-		var date Date
+		var date time.Time
 		if len(datas) == 7 {
 			for i, data := range datas {
 				if i == 0 {

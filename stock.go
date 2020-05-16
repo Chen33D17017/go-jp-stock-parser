@@ -5,11 +5,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type stock struct {
 	stockInfo
-	date    Date
+	date    time.Time
 	dataSet [6]float64
 }
 
@@ -40,7 +41,7 @@ func (s *stock) TradeDate() string {
 	return fmt.Sprintf("%d-%d-%d", year, month, day)
 }
 
-func getDate(s string) Date {
+func getDate(s string) time.Time {
 	re := regexp.MustCompile(`\d+`)
 	reRst := re.FindAllString(s, -1)
 	year, yearErr := strconv.Atoi(reRst[0])
@@ -49,7 +50,7 @@ func getDate(s string) Date {
 	if dayErr != nil || monthErr != nil || yearErr != nil {
 		panic("parseDate: fail to convert date")
 	}
-	return NewDate(year, month, day)
+	return time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 }
 
 //func (s *stock)

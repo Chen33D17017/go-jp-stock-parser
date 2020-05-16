@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -38,7 +39,6 @@ func (dbm DBManager) insertStock(obj stock) error {
 		obj.id, obj.TradeDate(), obj.dataSet[0], obj.dataSet[1], obj.dataSet[2], obj.dataSet[3], obj.dataSet[4])
 
 	if err != nil {
-		/* panic(err) */
 		return fmt.Errorf("Stock Data insert err: %s\n", err.Error())
 	}
 	defer insert.Close()
@@ -160,8 +160,8 @@ func (dbm DBManager) getDataDuration(si stockInfo, cf config) (duration, error) 
 			return rst, fmt.Errorf("getDataDuration: extract latest data query err %s", err.Error())
 		}
 	}
-	od, err := ParseDate(o)
-	ld, err := ParseDate(l)
+	od, err := time.Parse(DateFormat, o)
+	ld, err := time.Parse(DateFormat, l)
 	if err != nil {
 		return rst, fmt.Errorf("getDataDuration: change data type fail %s", err.Error())
 	}
