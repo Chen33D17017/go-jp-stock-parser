@@ -6,11 +6,11 @@ The tools will give you the helper like beneath:
 
 ``` 
   -end string
-        End time in format '20xx.xx'
+        End time in format '20xx-xx-xx'
   -file string
         Config file for storage, default with config.json (default "config.json")
   -start string
-        Start time in format '20xx.xx'
+        Start time in format '20xx-xx-xx'
   -stock int
         The number of stock 
   -u    Update to today
